@@ -30,7 +30,10 @@ impl TcpTransport {
     where
         R: for<'a> serde::de::Deserialize<'a>,
     {
-        let mut sock = net::TcpStream::connect(self.addr)?;
+        let mut sock = match self.timeout {
+            Some(timeout) => net::TcpStream::connect_timeout(&self.addr, timeout)?,
+            None => net::TcpStream::connect(self.addr)?,
+        };
         sock.set_read_timeout(self.timeout)?;
         sock.set_write_timeout(self.timeout)?;
 
@@ -170,5 +173,24 @@ mod tests {
         stream.flush().unwrap();
         let recv_resp = client_thread.join().unwrap();
         assert_eq!(serde_json::to_vec(&recv_resp).unwrap(), dummy_resp_ser);
+    }
+
+    // Test a dummy request / response connection timeout
+    #[test]
+    fn sanity_check_tcp_transport_connect_timeout() {
+        let addr: net::SocketAddr =
+            net::SocketAddrV4::new(net::Ipv4Addr::new(128, 0, 0, 1), 0).into();
+        let dummy_req = Request {
+            method: "arandommethod",
+            params: None,
+            id: serde_json::Value::Number(4242242.into()),
+            jsonrpc: Some("2.0"),
+        };
+
+        let transport = TcpTransport { addr, timeout: Some(time::Duration::from_secs(1)) };
+        let client = Client::with_transport(transport);
+
+        // must error with a timeout
+        assert!(client.send_request(dummy_req).is_err());
     }
 }
